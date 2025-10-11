@@ -1,8 +1,8 @@
 '''
 Author: nll
 Date: 2025-09-29 15:58:53
-LastEditors: nll
-LastEditTime: 2025-10-09 16:00:00
+LastEditors: '艾琳爱' '2664840261@qq.com'
+LastEditTime: 2025-10-10 14:29:05
 Description: 串口工具类
 '''
 import asyncio
@@ -65,6 +65,7 @@ class SerialHelper:
                 stopbits=stopbits_map.get(stopbits, serial.STOPBITS_ONE),
                 timeout=timeout,
             )
+            print(self._serial)
             self._stop_event = asyncio.Event()
 
     def close_port(self) -> None:
