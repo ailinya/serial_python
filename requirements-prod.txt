@@ -1,6 +1,10 @@
+# 生产环境依赖
+# 基于 requirements.txt，添加生产环境特定包
+
 # Web 框架
 fastapi==0.114.1
 uvicorn[standard]==0.30.6
+gunicorn>=21.2.0
 
 # 数据库相关
 sqlalchemy==2.0.23
@@ -14,3 +18,9 @@ pyserial==3.5
 # 其他依赖
 python-multipart==0.0.6
 
+# 生产环境工具
+psutil>=5.9.0
+supervisor>=4.2.0
+
+# 监控工具
+prometheus-client>=0.16.0

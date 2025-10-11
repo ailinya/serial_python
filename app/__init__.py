@@ -15,6 +15,10 @@ import sys
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.settings.database import engine, Base
+# 导入所有模型以确保表被创建
+from app.models.serial_config import SerialConfig
+from app.models.register_log import RegisterLog
+from app.models.saved_register import SavedRegister
 from app.api import v1_router
 from app.utils.serial_helper import SerialHelper
 from app.utils.port_monitor import PortMonitor

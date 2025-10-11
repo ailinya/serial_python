@@ -111,3 +111,67 @@ class BatchRegisterResponse(BaseModel):
     failed_operations: int
     results: List[dict] = Field(..., description="每个操作的结果")
     timestamp: str
+
+
+class SavedRegisterCreate(BaseModel):
+    """保存寄存器请求"""
+    address: str = Field(..., description="寄存器地址（16进制）", example="0x20470c04")
+    data: str = Field(..., description="寄存器数据（16进制）", example="0XFDB25233")
+    value32bit: str = Field(..., description="32位值（16进制）", example="0XFDB25233")
+    description: str = Field(None, max_length=200, description="描述", example="GPIO配置寄存器")
+
+
+class SavedRegisterUpdate(BaseModel):
+    """更新保存的寄存器请求"""
+    data: str = Field(None, description="寄存器数据（16进制）", example="0XFDB25233")
+    value32bit: str = Field(None, description="32位值（16进制）", example="0XFDB25233")
+    description: str = Field(None, max_length=200, description="描述", example="GPIO配置寄存器")
+
+
+class SavedRegisterResponse(BaseModel):
+    """保存的寄存器响应"""
+    success: bool = True
+    message: str = "操作成功"
+    data: dict = Field(..., description="寄存器数据")
+    
+    class Config:
+        from_attributes = True
+
+
+class SavedRegisterData(BaseModel):
+    """保存的寄存器数据"""
+    id: int
+    address: str
+    data: str
+    value32bit: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class SavedRegisterList(BaseModel):
+    """保存的寄存器列表响应"""
+    success: bool = True
+    message: str = "获取成功"
+    data: dict = Field(..., description="列表数据")
+    total: int
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除请求"""
+    register_ids: List[int] = Field(..., description="要删除的寄存器ID列表", example=[1, 2, 3])
+
+
+class BatchDeleteResponse(BaseModel):
+    """批量删除响应"""
+    success: bool = True
+    message: str = "批量删除完成"
+    data: dict = Field(..., description="删除结果数据")
+    total_operations: int
+    successful_operations: int
+    failed_operations: int
+    deleted_count: int = Field(..., description="实际删除的数量")
+    results: List[dict]
