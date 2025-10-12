@@ -78,7 +78,7 @@ python_back/
 
 ### 1. 环境要求
 
-- Python 3.8+
+- Python 3.13+ (推荐使用 conda 管理环境)
 - pip 包管理器
 
 ### 2. 安装依赖
@@ -88,9 +88,12 @@ python_back/
 git clone <repository-url>
 cd python_back
 
-# 创建虚拟环境（推荐）
-python -m venv venv
+# 创建 conda 虚拟环境（推荐）
+conda create -n serial_backend python=3.13 -y
+conda activate serial_backend
 
+# 或者使用 venv
+python -m venv venv
 # 激活虚拟环境
 # Windows
 venv\Scripts\activate
@@ -111,17 +114,20 @@ pip install -r requirements-prod.txt
 
 ```bash
 # 开发模式启动（支持热重载）
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8008
+python app/main.py
+
+# 或者使用 uvicorn 命令
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 9993
 
 # 生产模式启动
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8008
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9993
 ```
 
 ### 4. 访问服务
 
-- **API文档**: http://localhost:8008/docs
-- **服务状态**: http://localhost:8008/api/ping
-- **WebSocket**: ws://localhost:8008/ws
+- **API文档**: http://localhost:9993/docs
+- **服务状态**: http://localhost:9993/api/ping
+- **WebSocket**: ws://localhost:9993/ws
 
 ## API 接口文档
 
@@ -282,7 +288,7 @@ Content-Type: application/json
 
 ### 通用 WebSocket
 ```javascript
-const ws = new WebSocket('ws://localhost:8008/ws');
+const ws = new WebSocket('ws://localhost:9993/ws');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   console.log('收到数据:', data);
@@ -291,7 +297,7 @@ ws.onmessage = (event) => {
 
 ### 串口插拔监听
 ```javascript
-const ws = new WebSocket('ws://localhost:8008/ws/serial-ports');
+const ws = new WebSocket('ws://localhost:9993/ws/serial-ports');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.type === 'ports_update') {
@@ -390,17 +396,17 @@ raise HTTPException(
 1. **使用 Gunicorn**:
 ```bash
 pip install gunicorn
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8008
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:9993
 ```
 
 2. **使用 Docker**:
 ```dockerfile
-FROM python:3.9-slim
+FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9993"]
 ```
 
 ### 环境变量配置
@@ -411,7 +417,7 @@ DATABASE_URL=sqlite:///./app.db
 
 # 服务配置
 HOST=0.0.0.0
-PORT=8008
+PORT=9993
 DEBUG=False
 ```
 
@@ -431,6 +437,13 @@ A: 在 `serial_helper.py` 中添加设备特定的通信协议。
 
 ## 更新日志
 
+### v1.1.0 (2025-10-12)
+- ✅ 升级到 Python 3.13
+- ✅ 更新依赖包版本
+- ✅ 优化 conda 环境管理
+- ✅ 修复 Pydantic V2 兼容性
+- ✅ 改进错误处理和响应格式
+
 ### v1.0.0 (2025-10-10)
 - ✅ 基础串口通信功能
 - ✅ WebSocket 长连接支持
@@ -448,16 +461,6 @@ A: 在 `serial_helper.py` 中添加设备特定的通信协议。
 4. 推送到分支
 5. 创建 Pull Request
 
-## 许可证
 
-MIT License
-
-## 联系方式
-
-- 作者: 艾琳爱
-- 邮箱: 2664840261@qq.com
-- 项目地址: [GitHub Repository]
-
----
 
 **注意**: 本项目仅供学习和开发使用，请根据实际需求进行配置和部署。
