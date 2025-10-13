@@ -60,7 +60,7 @@ class RegisterController:
             address = int(request.address, 16)
             
             # 构建读取命令，包含字节数
-            command = f"READ {request.address} {request.size}"
+            command = f"read {request.address} {request.size}\r\n"
             
             # 发送命令到串口
             self.serial_helper.write_data(command, append_newline=True)
@@ -71,18 +71,18 @@ class RegisterController:
                 self.serial_helper._serial.reset_input_buffer()
                 
                 # 等待设备响应
-                time.sleep(0.5)  # 增加等待时间到0.5秒
-                
+                time.sleep(0.1)  # 增加等待时间到0.1秒
+
                 # 尝试读取响应数据
                 try:
                     response_data = self.serial_helper._serial.read(1024)
                     if response_data:
                         response_text = response_data.decode("utf-8", errors="ignore").strip()
-                        print(f"原始响应: {response_text}")  # 调试信息
+                        print(f":串口原始内容 {response_text}")  # 调试信息
                         
                         # 处理4字节的16进制返回值
                         processed_value = self._process_hex_response(response_text, request.size)
-                        print(f"处理后值: {processed_value}")  # 调试信息
+                        print(f":处理后值 {processed_value}")  # 调试信息
                         
                         return RegisterAccessResponse(
                             success=True,
@@ -115,96 +115,17 @@ class RegisterController:
         """处理16进制响应数据"""
         if not response_text:
             return None
-            
-        print(f"开始处理响应: {response_text}")  # 调试信息
-        
-        # 清理响应文本，移除可能的换行符和空格
-        clean_text = response_text.strip().replace('\n', '').replace('\r', '').replace(' ', '')
-        
-        try:
-            # 处理包含"READ0X"的情况，提取地址部分
-            if 'READ0X' in clean_text.upper():
-                print("检测到READ0X格式")  # 调试信息
-                parts = clean_text.upper().split('READ0X')
-                if len(parts) > 1:
-                    address_part = parts[1].strip()
-                    if not address_part.startswith('0X'):
-                        address_part = '0X' + address_part
-                    print(f"提取的地址: {address_part}")  # 调试信息
-                    return address_part
-            
-            # 处理包含"0XREAD"的情况，提取地址部分
-            if '0XREAD' in clean_text.upper():
-                print("检测到0XREAD格式")  # 调试信息
-                parts = clean_text.upper().split('0XREAD')
-                if len(parts) > 1:
-                    address_part = parts[1].strip()
-                    if not address_part.startswith('0X'):
-                        address_part = '0X' + address_part
-                    print(f"提取的地址: {address_part}")  # 调试信息
-                    return address_part
-            
-            # 尝试从调试信息中提取16进制值
-            import re
-            
-            # 查找类似 "0XFFB25233" 这样的模式（8位16进制数）
-            hex_pattern = r'0X[0-9A-F]{8}'
-            hex_matches = re.findall(hex_pattern, clean_text.upper())
-            if hex_matches:
-                print(f"正则匹配到0X格式: {hex_matches[0]}")  # 调试信息
-                return hex_matches[0]
-            
-            # 查找类似 "FFB25233" 这样的模式（没有0X前缀）
-            hex_pattern2 = r'[0-9A-F]{8}'
-            hex_matches2 = re.findall(hex_pattern2, clean_text.upper())
-            if hex_matches2:
-                result = '0X' + hex_matches2[0]
-                print(f"正则匹配到无前缀格式: {result}")  # 调试信息
-                return result
-            
-            # 查找任意长度的16进制数
-            hex_pattern3 = r'[0-9A-F]+'
-            hex_matches3 = re.findall(hex_pattern3, clean_text.upper())
-            if hex_matches3:
-                # 取最长的匹配
-                longest_match = max(hex_matches3, key=len)
-                if len(longest_match) >= 4:  # 至少4位
-                    result = '0X' + longest_match
-                    print(f"匹配到任意长度16进制: {result}")  # 调试信息
-                    return result
-            
-            # 如果响应是纯数字，转换为16进制
-            if clean_text.isdigit():
-                hex_value = hex(int(clean_text))
-                result = hex_value.upper().replace('0X', '0X')
-                print(f"数字转换: {result}")  # 调试信息
-                return result
-            
-            # 如果已经是16进制格式，确保是0X开头
-            if clean_text.startswith('0x'):
-                result = clean_text.upper()
-                print(f"0x转0X: {result}")  # 调试信息
-                return result
-            elif clean_text.startswith('0X'):
-                print(f"已经是0X格式: {clean_text}")  # 调试信息
-                return clean_text
-            else:
-                # 如果不是0X开头，添加0X前缀
-                result = '0X' + clean_text.upper()
-                print(f"添加0X前缀: {result}")  # 调试信息
-                return result
-                
-        except Exception as e:
-            print(f"处理响应时出错: {e}")  # 调试信息
-            # 如果转换失败，保持原格式
-            if not clean_text.startswith('0X'):
-                return '0X' + clean_text.upper()
-            return clean_text.upper()
+        start_index = response_text.find(':') + 1
+        end_index = response_text.find('\r\nOK')
+        value = response_text[start_index:end_index]
+        value = '0x' + value.strip().upper()
+        print(f":匹配后的值 {value}")  # 调试信息
+        return value
 
     def write_register_direct(self, request: RegisterWriteRequest) -> RegisterAccessResponse:
         """直接写入寄存器值（不涉及数据库）"""
         try:
-            # 验证16进制地址和值格式
+            # 验证16进制地址和数据前缀格式
             if not request.address.startswith('0x') and not request.address.startswith('0X'):
                 raise ValueError(f"地址必须以0x或0X开头，当前地址: {request.address}")
             
@@ -225,7 +146,7 @@ class RegisterController:
             value = int(request.value, 16)
             
             # 构建写入命令
-            command = f"WRITE {request.address} {request.value}"
+            command = f"write {request.address} {request.value}\r\n"
             
             # 发送命令到串口
             self.serial_helper.write_data(command, append_newline=True)
