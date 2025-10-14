@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
+import json
 
 import os
 import sys
@@ -105,12 +106,12 @@ def custom_swagger_ui_html():
         <script src=\"https://cdn.bootcdn.net/ajax/libs/swagger-ui/5.11.7/swagger-ui-bundle.min.js\"></script>
         <script src=\"https://cdn.bootcdn.net/ajax/libs/swagger-ui/5.11.7/swagger-ui-standalone-preset.min.js\"></script>
         <script>
-          window.ui = SwaggerUIBundle({
+          window.ui = SwaggerUIBundle({{
             url: '{app.openapi_url}',
             dom_id: '#swagger-ui',
             presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
             layout: 'BaseLayout',
-          });
+          }});
         </script>
       </body>
     </html>
@@ -162,9 +163,21 @@ async def serial_ports_websocket(websocket: WebSocket):
             # 接收客户端心跳或其他消息
             try:
                 data = await websocket.receive_text()
-                # 可以处理客户端发送的心跳消息
-                if data == "ping":
-                    await websocket.send_text("pong")
+                # 解析JSON消息
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "get_ports":
+                        # 客户端请求获取串口列表
+                        current_ports = port_monitor.get_current_ports()
+                        await websocket.send_json({
+                            "type": "ports_update",
+                            "ports": current_ports
+                        })
+                except json.JSONDecodeError:
+                    # 处理非JSON消息（如心跳）
+                    if data == "ping":
+                        await websocket.send_text("pong")
+                        
             except WebSocketDisconnect:
                 break
             except Exception as e:
