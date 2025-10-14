@@ -99,3 +99,26 @@ def batch_write_registers_v2(request: BatchRegisterWriteRequestV2):
     """批量写入寄存器V2（使用嵌套模型验证）"""
     return register_controller.batch_write_registers_v2(request)
 
+
+@router.post("/send-command")
+def send_command(request: dict):
+    """发送串口命令"""
+    try:
+        command = request.get("command", "")
+        if not command:
+            raise HTTPException(status_code=400, detail="命令不能为空")
+        
+        # 检查串口是否已连接
+        status = serial_helper.get_status()
+        if not status["is_open"]:
+            raise HTTPException(status_code=400, detail="串口未连接")
+        
+        # 发送命令到串口
+        bytes_written = serial_helper.write_data(command, append_newline=True)
+        
+        return {
+            "success": True,
+            "message": f"命令发送成功，写入 {bytes_written} 字节"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"发送命令失败: {str(e)}")
