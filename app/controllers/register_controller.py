@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime
 import time
+import time
 
 from app.models.register_log import RegisterLog
 from app.models.serial_config import SerialConfig
@@ -59,23 +60,30 @@ class RegisterController:
             
             address = int(request.address, 16)
             
-            # 构建读取命令，包含字节数
-            command = f"read {request.address} {request.size}\r\n"
+            # # 在读取寄存器前，先清空串口缓冲区中的缓存数据
+            # if self.serial_helper._serial and self.serial_helper._serial.is_open:
+            #     print("读取寄存器前清空串口缓冲区...")
+            #     # 清空输入缓冲区，确保不会读取到之前的残留数据
+            #     self.serial_helper._serial.reset_input_buffer()
+            #     # 清空输出缓冲区，确保命令发送不会受到之前数据的影响
+            #     self.serial_helper._serial.reset_output_buffer()
+            #     # 短暂等待，确保缓冲区完全清空
+            #     time.sleep(0.02)
             
+            # 构建读取命令，包含字节数
+            command = f"read {request.address} {request.size}"
+            # 刷新串口输入缓存区，防止读取到旧数据
+            self.serial_helper._serial.flushInput()
             # 发送命令到串口
             self.serial_helper.write_data(command, append_newline=True)
-            
-            # 发送命令后立即清空缓冲区，然后等待响应
-            if self.serial_helper._serial and self.serial_helper._serial.is_open:
-                # 清空串口缓冲区
-                self.serial_helper._serial.reset_input_buffer()
-                
-                # 等待设备响应
-                time.sleep(0.1)  # 增加等待时间到0.1秒
+            # 等待设备响应
+            time.sleep(0.1)  # 增加等待时间到0.1秒
 
-                # 尝试读取响应数据
-                try:
+            # 尝试读取响应数据
+            try:
+                if self.serial_helper._serial and self.serial_helper._serial.is_open:
                     response_data = self.serial_helper._serial.read(1024)
+                    print(f"读取到{response_data}")  # 调试信息
                     if response_data:
                         response_text = response_data.decode("utf-8", errors="ignore").strip()
                         print(f":串口原始内容 {response_text}")  # 调试信息
@@ -92,9 +100,9 @@ class RegisterController:
                             access_type="READ",
                             timestamp=datetime.now().isoformat()
                         )
-                except Exception as e:
-                    print(f"读取响应时出错: {e}")  # 调试信息
-                    pass
+            except Exception as e:
+                print(f"读取响应时出错: {e}")  # 调试信息
+                pass
             
             # 如果没有读取到响应，返回默认值
             return RegisterAccessResponse(
@@ -146,7 +154,7 @@ class RegisterController:
             value = int(request.value, 16)
             
             # 构建写入命令
-            command = f"write {request.address} {request.value}\r\n"
+            command = f"write {request.address} {request.value}"
             
             # 发送命令到串口
             self.serial_helper.write_data(command, append_newline=True)
@@ -218,12 +226,15 @@ class RegisterController:
                     size=request.size
                 )
                 
+                # 添加小延迟避免串口通信冲突
+                time.sleep(0.05)
+                
                 # 执行读取操作
                 result = self.read_register_direct(read_request)
                 
                 results.append({
                     "address": address,
-                    "status": "success",
+                    "success": True,  # 改为布尔值以匹配前端期望
                     "value": result.value,
                     "message": result.message,
                     "timestamp": result.timestamp
@@ -233,7 +244,7 @@ class RegisterController:
             except Exception as e:
                 results.append({
                     "address": address,
-                    "status": "failed",
+                    "success": False,  # 改为布尔值以匹配前端期望
                     "value": None,
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
@@ -271,13 +282,16 @@ class RegisterController:
                     value=value
                 )
                 
+                # 添加小延迟避免串口通信冲突
+                time.sleep(0.05)
+                
                 # 执行写入操作
                 result = self.write_register_direct(write_request)
                 
                 results.append({
                     "address": address,
                     "value": value,
-                    "status": "success",
+                    "success": True,  # 改为布尔值以匹配前端期望
                     "message": result.message,
                     "timestamp": result.timestamp
                 })
@@ -287,7 +301,7 @@ class RegisterController:
                 results.append({
                     "address": operation.get("address", "unknown"),
                     "value": operation.get("value", "unknown"),
-                    "status": "failed",
+                    "success": False,  # 改为布尔值以匹配前端期望
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
@@ -317,13 +331,16 @@ class RegisterController:
                     value=operation.value
                 )
                 
+                # 添加小延迟避免串口通信冲突
+                time.sleep(0.05)
+                
                 # 执行写入操作
                 result = self.write_register_direct(write_request)
                 
                 results.append({
                     "address": operation.address,
                     "value": operation.value,
-                    "status": "success",
+                    "success": True,  # 改为布尔值以匹配前端期望
                     "message": result.message,
                     "timestamp": result.timestamp
                 })
@@ -333,7 +350,7 @@ class RegisterController:
                 results.append({
                     "address": operation.address,
                     "value": operation.value,
-                    "status": "failed",
+                    "success": False,  # 改为布尔值以匹配前端期望
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
                 })

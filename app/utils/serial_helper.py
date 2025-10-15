@@ -96,12 +96,12 @@ class SerialHelper:
             "active_config_id": self._active_config_id
         }
 
-    def write_data(self, data: str, append_newline: bool = False) -> int:
+    def write_data(self, data: str, append_newline: bool = True) -> int:
         """写入数据"""
         with self._lock:
             if not self._serial or not self._serial.is_open:
                 raise ValueError("串口未打开")
-            payload = (data + ("\n" if append_newline else "")).encode("utf-8")
+            payload = (data + ("\r\n" if append_newline else "")).encode("utf-8")
             return self._serial.write(payload)
 
     async def start_reading(self, callback_func):
