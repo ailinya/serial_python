@@ -62,16 +62,16 @@ class SerialConnectionRequest(BaseModel):
 
 class BatchRegisterReadRequest(BaseModel):
     """批量寄存器读请求"""
-    addresses: List[str] = Field(..., min_items=1, max_items=20, description="寄存器地址列表，最多20个")
+    addresses: List[str] = Field(..., min_items=1, description="寄存器地址列表")
     size: int = Field(4, ge=1, le=8, description="每个地址的读取字节数，默认4字节")
 
 
 class BatchRegisterWriteRequest(BaseModel):
     """批量寄存器写请求"""
-    operations: List[dict] = Field(..., min_items=1, max_items=20, description="写入操作列表，最多20个")
+    operations: List[dict] = Field(..., min_items=1, description="写入操作列表")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "operations": [
                     {"address": "0x20470c04", "value": "0xFFB25233"},
@@ -83,10 +83,10 @@ class BatchRegisterWriteRequest(BaseModel):
 
 class BatchRegisterWriteRequestV2(BaseModel):
     """批量寄存器写请求V2（使用嵌套模型）"""
-    operations: List['BatchOperationItem'] = Field(..., min_items=1, max_items=20, description="写入操作列表")
+    operations: List['BatchOperationItem'] = Field(..., min_items=1, description="写入操作列表")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "operations": [
                     {"address": "0x20470c04", "value": "0xFFB25233"},
