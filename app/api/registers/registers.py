@@ -218,6 +218,19 @@ def parse_register_excel(file_content: bytes) -> (List[Dict[str, Any]], List[str
 class ExcelUploadRequest(BaseModel):
     file_content: str  # Base64 encoded string
 
+@router.get("/definitions")
+def get_definitions():
+    """获取寄存器定义"""
+    try:
+        definitions = register_controller.get_register_definitions()
+        return {
+            "success": True,
+            "data": definitions
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取寄存器定义失败: {str(e)}")
+
+
 @router.post("/upload-excel")
 async def upload_excel(request: ExcelUploadRequest):
     """
