@@ -61,7 +61,7 @@ class RegisterController:
                 col_map = {str(col_name).strip(): i for i, col_name in enumerate(header_row) if pd.notna(col_name)}
 
                 # 检查必需的列是否存在
-                required_cols = ['名称', '偏移地址', '成员变量', '位域', '类型', '初始值']
+                required_cols = ['名称', '偏移地址', '成员变量', '位域', '类型', '初始值', '成员描述']
                 if not all(col in col_map for col in required_cols):
                     continue # 缺少关键列，跳过此sheet
 
@@ -71,6 +71,7 @@ class RegisterController:
                 member_idx = col_map['成员变量']
                 bitfield_idx = col_map['位域']
                 type_idx = col_map['类型']
+                desc_idx = col_map['成员描述']
 
                 # 3. 遍历数据行进行解析
                 sheet_registers = {}
@@ -124,11 +125,13 @@ class RegisterController:
                                 end_bit = int(bit_range)
                             
                             if current_reg_name in sheet_registers:
+                                description = str(row[desc_idx]) if pd.notna(row[desc_idx]) else ''
                                 sheet_registers[current_reg_name]["bit_fields"].append({
                                     "name": bit_field_name,
                                     "start_bit": start_bit,
                                     "end_bit": end_bit,
-                                    "type": final_type
+                                    "type": final_type,
+                                    "description": description
                                 })
                         except (ValueError, TypeError):
                             continue
