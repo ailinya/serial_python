@@ -12,6 +12,7 @@ from datetime import datetime
 import time
 import pandas as pd
 import os
+import asyncio
 
 from app.models.register_log import RegisterLog
 from app.models.serial_config import SerialConfig
@@ -21,6 +22,46 @@ from app.schemas.register_schemas import (
     BatchRegisterWriteRequest, BatchRegisterWriteRequestV2, BatchRegisterResponse
 )
 from app.utils.serial_helper import SerialHelper
+
+
+def _group_contiguous_addresses(addresses: List[str], size: int, max_regs_per_block: int = 32) -> List[dict]:
+    """
+    将地址列表分组为连续的内存块，并遵守每个块的最大寄存器数量限制。
+    """
+    if not addresses:
+        return []
+
+    int_addresses = sorted([int(addr, 16) for addr in addresses])
+
+    groups = []
+    if not int_addresses:
+        return []
+        
+    current_group = [int_addresses[0]]
+
+    for i in range(1, len(int_addresses)):
+        # 检查连续性和块大小限制
+        if int_addresses[i] == current_group[-1] + size and len(current_group) < max_regs_per_block:
+            current_group.append(int_addresses[i])
+        else:
+            groups.append(current_group)
+            current_group = [int_addresses[i]]
+    
+    groups.append(current_group)
+
+    blocks = []
+    for group in groups:
+        if not group: continue
+        start_address = group[0]
+        length = len(group) * size
+        original_addrs_in_block = [f"0x{addr:08X}" for addr in group]
+        blocks.append({
+            "start_address": f"0x{start_address:08X}",
+            "length": length,
+            "original_addresses": original_addrs_in_block
+        })
+        
+    return blocks
 
 
 class RegisterController:
@@ -245,229 +286,235 @@ class RegisterController:
         print(f":匹配后的值 {value}")  # 调试信息
         return value
 
-    def write_register_direct(self, request: RegisterWriteRequest) -> RegisterAccessResponse:
-        """直接写入寄存器值（不涉及数据库）"""
+    async def write_register_direct(self, request: RegisterWriteRequest, wait_for_ok: bool = True) -> RegisterAccessResponse:
+        """(异步)直接写入寄存器值，可选是否等待OK"""
         try:
-            # 验证16进制地址和数据前缀格式
             if not request.address.startswith('0x') and not request.address.startswith('0X'):
                 raise ValueError(f"地址必须以0x或0X开头，当前地址: {request.address}")
-            
             if not request.value.startswith('0x') and not request.value.startswith('0X'):
                 raise ValueError(f"值必须以0x或0X开头，当前值: {request.value}")
-            
-            # 验证地址格式
-            hex_part = request.address[2:] if request.address.startswith('0x') else request.address[2:]
-            if not all(c in '0123456789ABCDEFabcdef' for c in hex_part):
-                raise ValueError(f"地址包含非法字符，当前地址: {request.address}")
-            
-            # 验证值格式
-            value_hex_part = request.value[2:] if request.value.startswith('0x') else request.value[2:]
-            if not all(c in '0123456789ABCDEFabcdef' for c in value_hex_part):
-                raise ValueError(f"值包含非法字符，当前值: {request.value}")
-            
-            address = int(request.address, 16)
-            value = int(request.value, 16)
-            
-            # 构建写入命令
+
             command = f"write {request.address} {request.value}"
+
+            if not self.serial_helper._serial or not self.serial_helper._serial.is_open:
+                raise ConnectionError("Serial port is not open.")
+
+            # 写入命令
+            await self.serial_helper.async_write(command)
+
+            if wait_for_ok:
+                # 使用健壮的读取循环等待 "OK"
+                response_buffer = bytearray()
+                terminator = b"OK\r\n"
+                start_time = time.time()
+                timeout = 3.0
+
+                while terminator not in response_buffer:
+                    if time.time() - start_time > timeout:
+                        raise TimeoutError("写入命令后等待OK响应超时")
+                    
+                    chunk = await self.serial_helper.async_read(64)
+                    if chunk:
+                        response_buffer.extend(chunk)
+                    else:
+                        await asyncio.sleep(0.01)
             
-            # 发送命令到串口
-            self.serial_helper.write_data(command, append_newline=True)
-            
-            # 等待并读取响应
-            time.sleep(0.1)  # 等待设备响应
-            
-            # 尝试读取响应数据
-            try:
-                if self.serial_helper._serial and self.serial_helper._serial.is_open:
-                    response_data = self.serial_helper._serial.read(1024)
-                    if response_data:
-                        response_text = response_data.decode("utf-8", errors="ignore").strip()
-                        # 处理响应格式，确保返回0X开头的格式
-                        if response_text and not response_text.startswith('0X') and not response_text.startswith('0x'):
-                            # 如果不是0X格式，尝试转换为0X格式
-                            try:
-                                # 如果响应是纯数字，转换为16进制
-                                if response_text.isdigit():
-                                    hex_value = hex(int(response_text))
-                                    response_text = hex_value.upper().replace('0X', '0X')
-                                else:
-                                    # 如果已经是16进制格式，确保是0X开头
-                                    if response_text.startswith('0x'):
-                                        response_text = response_text.upper()
-                                    elif not response_text.startswith('0X'):
-                                        response_text = '0X' + response_text.upper()
-                            except:
-                                # 如果转换失败，保持原格式
-                                pass
-                        
-                        return RegisterAccessResponse(
-                            success=True,
-                            message="寄存器写入成功",
-                            address=request.address,
-                            value=request.value,
-                            access_type="WRITE",
-                            timestamp=datetime.now().isoformat()
-                        )
-            except Exception:
-                pass
-            
-            # 如果没有读取到响应，返回默认值
             return RegisterAccessResponse(
                 success=True,
-                message="寄存器写入命令已发送，但未收到响应",
+                message="寄存器写入命令已发送",
                 address=request.address,
                 value=request.value,
                 access_type="WRITE",
                 timestamp=datetime.now().isoformat()
             )
         
-        except ValueError:
-            raise HTTPException(status_code=400, detail="地址或值格式错误，请使用16进制格式")
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=f"地址或值格式错误: {ve}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"写入寄存器失败: {str(e)}")
 
-    def batch_read_registers(self, request: BatchRegisterReadRequest) -> BatchRegisterResponse:
-        """批量读取寄存器"""
-        results = []
-        successful_count = 0
-        failed_count = 0
+    async def batch_read_registers(self, request: BatchRegisterReadRequest) -> BatchRegisterResponse:
+        """批量读取寄存器 (异步优化版)"""
+        try:
+            # The block size limit is now a safeguard, not the primary fix.
+            address_blocks = _group_contiguous_addresses(request.addresses, request.size)
+            
+            all_results_map = {}
+            successful_count = 0
+            failed_count = 0
+
+            for block in address_blocks:
+                try:
+                    command = f"read {block['start_address']} {block['length']}"
+                    
+                    if not self.serial_helper._serial or not self.serial_helper._serial.is_open:
+                        raise ConnectionError("Serial port is not open.")
+
+                    # --- CRITICAL FIX: Flush input buffer before writing ---
+                    await self.serial_helper.async_flush_input()
+                    
+                    await self.serial_helper.async_write(command)
+                    
+                    # --- Robust reading loop with terminator and timeout ---
+                    response_buffer = bytearray()
+                    terminator = b"OK\r\n"
+                    start_time = time.time()
+                    timeout = 3.0  # 3-second timeout for the entire block read
+
+                    while terminator not in response_buffer:
+                        if time.time() - start_time > timeout:
+                            raise TimeoutError(f"Timeout waiting for response terminator '{terminator.decode().strip()}'")
+                        
+                        chunk = await self.serial_helper.async_read(128)
+                        if chunk:
+                            response_buffer.extend(chunk)
+                        else:
+                            await asyncio.sleep(0.01)
+                    
+                    response_data = bytes(response_buffer)
+                    # --- End of robust reading loop ---
+
+                    if response_data:
+                        response_text = response_data.decode("utf-8", errors="ignore").strip()
+                        hex_body = self._process_merged_hex_response(response_text)
+                        
+                        expected_len = block['length'] * 2
+                        if len(hex_body) >= expected_len:
+                            hex_body = hex_body[:expected_len]
+                            
+                            for j, original_addr in enumerate(block['original_addresses']):
+                                start_idx = j * request.size * 2
+                                end_idx = start_idx + request.size * 2
+                                value = "0x" + hex_body[start_idx:end_idx].upper()
+                                
+                                all_results_map[original_addr] = {
+                                    "address": original_addr, "success": True, "value": value,
+                                    "message": "读取成功", "timestamp": datetime.now().isoformat()
+                                }
+                                successful_count += 1
+                        else:
+                            raise ValueError(f"Merged read response length mismatch. Expected {expected_len}, got {len(hex_body)}.")
+                    else:
+                        raise ValueError("No response from merged read.")
+
+                except Exception as e:
+                    for addr in block['original_addresses']:
+                        all_results_map[addr] = {
+                            "address": addr, "success": False, "value": None,
+                            "message": f"块读取失败: {str(e)}", "timestamp": datetime.now().isoformat()
+                        }
+                        failed_count += 1
+            
+            final_results = [all_results_map.get(addr) for addr in request.addresses if addr in all_results_map]
+
+            return BatchRegisterResponse(
+                success=True,
+                message=f"批量读取完成，成功 {successful_count} 个，失败 {failed_count} 个",
+                total_operations=len(request.addresses),
+                successful_operations=successful_count,
+                failed_operations=failed_count,
+                results=final_results,
+                timestamp=datetime.now().isoformat()
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"批量读取时发生严重错误: {str(e)}")
+
+    def _process_merged_hex_response(self, response_text: str) -> str:
+        """从合并读取的多行响应中提取并拼接纯十六进制数据。"""
+        if not response_text:
+            return ""
         
-        for address in request.addresses:
-            try:
-                # 创建单个读取请求
-                read_request = RegisterReadRequest(
-                    address=address,
-                    size=request.size
-                )
-                
-                # 添加小延迟避免串口通信冲突
-                time.sleep(0.05)
-                
-                # 执行读取操作
-                result = self.read_register_direct(read_request)
-                
-                results.append({
-                    "address": address,
-                    "success": True,  # 改为布尔值以匹配前端期望
-                    "value": result.value,
-                    "message": result.message,
-                    "timestamp": result.timestamp
-                })
-                successful_count += 1
-                
-            except Exception as e:
-                results.append({
-                    "address": address,
-                    "success": False,  # 改为布尔值以匹配前端期望
-                    "value": None,
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                })
-                failed_count += 1
+        hex_parts = []
+        lines = response_text.splitlines() # 按行分割
+        
+        for line in lines:
+            line = line.strip()
+            if ":" in line:
+                # 提取冒号后面的部分
+                try:
+                    hex_value = line.split(":")[1].strip()
+                    # 移除可能存在的'0x'前缀
+                    if hex_value.lower().startswith('0x'):
+                        hex_value = hex_value[2:]
+                    hex_parts.append(hex_value)
+                except IndexError:
+                    continue # 忽略格式不正确的行
+        
+        # 将所有提取的十六进制部分拼接成一个长字符串
+        return "".join(hex_parts)
+
+    async def batch_write_registers(self, request: BatchRegisterWriteRequest) -> BatchRegisterResponse:
+        """(异步优化, "火力全开"模式)批量写入寄存器"""
+        
+        # --- 清空一次缓冲区，为命令风暴做准备 ---
+        if self.serial_helper._serial and self.serial_helper._serial.is_open:
+            await self.serial_helper.async_flush_input()
+
+        tasks = []
+        for operation in request.operations:
+            address = operation.get("address")
+            value = operation.get("value")
+            if address is None or value is None:
+                continue # 跳过无效操作
+            
+            write_request = RegisterWriteRequest(address=address, value=value)
+            # 创建一个不等待OK的任务
+            task = self.write_register_direct(write_request, wait_for_ok=False)
+            tasks.append(task)
+
+        # --- 并发执行所有写入任务 ---
+        await asyncio.gather(*tasks)
+
+        # --- 由于我们没有等待确认，所以只能假设所有操作都已“成功”发送 ---
+        results = [{
+            "address": op.get("address"), "value": op.get("value"),
+            "success": True, "message": "写入命令已发送",
+            "timestamp": datetime.now().isoformat()
+        } for op in request.operations]
         
         return BatchRegisterResponse(
             success=True,
-            message=f"批量读取完成，成功 {successful_count} 个，失败 {failed_count} 个",
-            total_operations=len(request.addresses),
-            successful_operations=successful_count,
-            failed_operations=failed_count,
+            message=f"批量写入命令已全部发送 ({len(tasks)} 个)",
+            total_operations=len(tasks),
+            successful_operations=len(tasks),
+            failed_operations=0,
             results=results,
             timestamp=datetime.now().isoformat()
         )
 
-    def batch_write_registers(self, request: BatchRegisterWriteRequest) -> BatchRegisterResponse:
-        """批量写入寄存器"""
+    async def batch_write_registers_v2(self, request: BatchRegisterWriteRequestV2) -> BatchRegisterResponse:
+        """(异步优化)批量写入寄存器V2（使用嵌套模型验证）"""
         results = []
         successful_count = 0
         failed_count = 0
         
         for operation in request.operations:
             try:
-                # 验证操作数据
-                address = operation.get("address")
-                value = operation.get("value")
-                
-                if address is None or value is None:
-                    raise ValueError("操作数据不完整，缺少 address 或 value")
-                
-                # 创建单个写入请求
-                write_request = RegisterWriteRequest(
-                    address=address,
-                    value=value
-                )
-                
-                # 添加小延迟避免串口通信冲突
-                time.sleep(0.05)
-                
-                # 执行写入操作
-                result = self.write_register_direct(write_request)
-                
-                results.append({
-                    "address": address,
-                    "value": value,
-                    "success": True,  # 改为布尔值以匹配前端期望
-                    "message": result.message,
-                    "timestamp": result.timestamp
-                })
-                successful_count += 1
-                
-            except Exception as e:
-                results.append({
-                    "address": operation.get("address", "unknown"),
-                    "value": operation.get("value", "unknown"),
-                    "success": False,  # 改为布尔值以匹配前端期望
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                })
-                failed_count += 1
-        
-        return BatchRegisterResponse(
-            success=True,
-            message=f"批量写入完成，成功 {successful_count} 个，失败 {failed_count} 个",
-            total_operations=len(request.operations),
-            successful_operations=successful_count,
-            failed_operations=failed_count,
-            results=results,
-            timestamp=datetime.now().isoformat()
-        )
-
-    def batch_write_registers_v2(self, request: BatchRegisterWriteRequestV2) -> BatchRegisterResponse:
-        """批量写入寄存器V2（使用嵌套模型验证）"""
-        results = []
-        successful_count = 0
-        failed_count = 0
-        
-        for operation in request.operations:
-            try:
-                # 创建单个写入请求
                 write_request = RegisterWriteRequest(
                     address=operation.address,
                     value=operation.value
                 )
                 
-                # 添加小延迟避免串口通信冲突
-                time.sleep(0.05)
-                
-                # 执行写入操作
-                result = self.write_register_direct(write_request)
+                await self.write_register_direct(write_request)
                 
                 results.append({
                     "address": operation.address,
                     "value": operation.value,
-                    "success": True,  # 改为布
+                    "success": True,
+                    "message": "写入成功",
+                    "timestamp": datetime.now().isoformat()
                 })
                 successful_count += 1
                 
             except Exception as e:
+                failed_count += 1
                 results.append({
                     "address": operation.address,
                     "value": operation.value,
-                    "success": False,  # 改为布尔值以匹配前端期望
+                    "success": False,
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
-                failed_count += 1
         
         return BatchRegisterResponse(
             success=True,

@@ -8,7 +8,7 @@ Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查�
 '''
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import openpyxl
 import io
 import base64
@@ -81,13 +81,13 @@ def disconnect_serial():
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"串口断开失败: {str(exc)}")
 @router.post("/write", response_model=RegisterAccessResponse)
-def write_register(request: RegisterWriteRequest):
+async def write_register(request: RegisterWriteRequest):
     """写入寄存器值"""
-    return register_controller.write_register_direct(request)
+    return await register_controller.write_register_direct(request)
 
 
 @router.post("/batch-read", response_model=BatchRegisterResponse)
-def batch_read_registers(request: dict):
+async def batch_read_registers(request: dict):
     """批量读取寄存器 (手动验证)"""
     # 手动验证
     addresses = request.get("addresses")
@@ -101,19 +101,19 @@ def batch_read_registers(request: dict):
 
     # 构造一个符合 Pydantic 模型的对象，然后传递给控制器
     validated_request = BatchRegisterReadRequest(addresses=addresses, size=size)
-    return register_controller.batch_read_registers(validated_request)
+    return await register_controller.batch_read_registers(validated_request)
 
 
 @router.post("/batch-write", response_model=BatchRegisterResponse)
-def batch_write_registers(request: BatchRegisterWriteRequest):
+async def batch_write_registers(request: BatchRegisterWriteRequest):
     """批量写入寄存器"""
-    return register_controller.batch_write_registers(request)
+    return await register_controller.batch_write_registers(request)
 
 
 @router.post("/batch-write-v2", response_model=BatchRegisterResponse)
-def batch_write_registers_v2(request: BatchRegisterWriteRequestV2):
+async def batch_write_registers_v2(request: BatchRegisterWriteRequestV2):
     """批量写入寄存器V2（使用嵌套模型验证）"""
-    return register_controller.batch_write_registers_v2(request)
+    return await register_controller.batch_write_registers_v2(request)
 
 
 @router.post("/send-command")
@@ -140,7 +140,7 @@ def send_command(request: dict):
         raise HTTPException(status_code=500, detail=f"发送命令失败: {str(e)}")
 
 
-def parse_register_excel(file_content: bytes) -> (List[Dict[str, Any]], List[str]):
+def parse_register_excel(file_content: bytes) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     解析寄存器Excel文件并返回数据和调试信息。
     """

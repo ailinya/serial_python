@@ -7,22 +7,30 @@ Description: 串口工具类
 '''
 import asyncio
 import threading
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
+# For runtime, to handle cases where pyserial is not installed
+_serial_module = None
+_list_ports_func = None
+
 try:
+    import serial as _serial_module
+    from serial.tools import list_ports as _list_ports_func
+except ImportError:
+    pass  # Modules will remain None, handled in the methods
+
+# For type checking, to allow static analysis without runtime errors
+if TYPE_CHECKING:
     import serial
     from serial.tools import list_ports
-except ImportError:
-    serial = None
-    list_ports = None
 
 
 class SerialHelper:
     """串口操作工具类"""
     
     def __init__(self):
-        self._serial: Optional[serial.Serial] = None
+        self._serial: Optional["serial.Serial"] = None
         self._lock = threading.Lock()
         self._reader_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -30,14 +38,14 @@ class SerialHelper:
 
     def list_available_ports(self) -> List[str]:
         """列出可用串口"""
-        if list_ports is None:
+        if _list_ports_func is None:
             raise ValueError("pyserial 未安装，请先安装 pyserial")
-        return [p.device for p in list_ports.comports()]
+        return [p.device for p in _list_ports_func.comports()]
 
     def open_port(self, port: str, baudrate: int = 115200, bytesize: int = 8, 
                   parity: str = "N", stopbits: float = 1, timeout: float = 0.05) -> None:
         """打开串口"""
-        if serial is None:
+        if _serial_module is None:
             raise ValueError("pyserial 未安装，请先安装 pyserial")
         
         with self._lock:
@@ -45,24 +53,24 @@ class SerialHelper:
                 raise ValueError("串口已打开，请先关闭")
             
             parity_map = {
-                "N": serial.PARITY_NONE,
-                "E": serial.PARITY_EVEN,
-                "O": serial.PARITY_ODD,
-                "M": serial.PARITY_MARK,
-                "S": serial.PARITY_SPACE,
+                "N": _serial_module.PARITY_NONE,
+                "E": _serial_module.PARITY_EVEN,
+                "O": _serial_module.PARITY_ODD,
+                "M": _serial_module.PARITY_MARK,
+                "S": _serial_module.PARITY_SPACE,
             }
             stopbits_map = {
-                1: serial.STOPBITS_ONE,
-                1.5: serial.STOPBITS_ONE_POINT_FIVE,
-                2: serial.STOPBITS_TWO
+                1: _serial_module.STOPBITS_ONE,
+                1.5: _serial_module.STOPBITS_ONE_POINT_FIVE,
+                2: _serial_module.STOPBITS_TWO
             }
             
-            self._serial = serial.Serial(
+            self._serial = _serial_module.Serial(
                 port=port,
                 baudrate=baudrate,
                 bytesize=bytesize,
-                parity=parity_map.get(parity.upper(), serial.PARITY_NONE),
-                stopbits=stopbits_map.get(stopbits, serial.STOPBITS_ONE),
+                parity=parity_map.get(parity.upper(), _serial_module.PARITY_NONE),
+                stopbits=stopbits_map.get(stopbits, _serial_module.STOPBITS_ONE),
                 timeout=timeout,
             )
             print(self._serial)
@@ -103,6 +111,32 @@ class SerialHelper:
                 raise ValueError("串口未打开")
             payload = (data + ("\r\n" if append_newline else "")).encode("utf-8")
             return self._serial.write(payload)
+
+    async def async_write(self, data: str, append_newline: bool = True) -> int:
+        """异步写入数据"""
+        if not self._serial or not self._serial.is_open:
+            raise ValueError("串口未打开")
+        
+        payload = (data + ("\r\n" if append_newline else "")).encode("utf-8")
+        
+        # 在线程池中运行阻塞的写入操作
+        return await asyncio.to_thread(self._serial.write, payload)
+
+    async def async_read(self, size: int) -> bytes:
+        """异步读取数据"""
+        if not self._serial or not self._serial.is_open:
+            raise ValueError("串口未打开")
+        
+        # 在线程池中运行阻塞的读取操作
+        return await asyncio.to_thread(self._serial.read, size)
+
+    async def async_flush_input(self):
+        """异步清空输入缓冲区"""
+        if not self._serial or not self._serial.is_open:
+            raise ValueError("串口未打开")
+        
+        # 在线程池中运行阻塞的清空操作
+        await asyncio.to_thread(self._serial.reset_input_buffer)
 
     async def start_reading(self, callback_func):
         """开始读取串口数据"""
