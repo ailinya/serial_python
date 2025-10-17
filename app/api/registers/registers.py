@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import openpyxl
 import io
 import base64
+import pandas as pd
 
 from app.schemas.register_schemas import (
     RegisterReadRequest, RegisterWriteRequest, SerialConnectionRequest, RegisterAccessResponse,
@@ -140,96 +141,101 @@ def send_command(request: dict):
         raise HTTPException(status_code=500, detail=f"发送命令失败: {str(e)}")
 
 
-def parse_register_excel(file_content: bytes) -> Tuple[List[Dict[str, Any]], List[str]]:
+def parse_register_excel(file_content: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, Any], List[str]]:
     """
-    解析寄存器Excel文件并返回数据和调试信息。
+    解析寄存器Excel文件，返回表格数据、位域定义和调试信息。
     """
     try:
         workbook = openpyxl.load_workbook(io.BytesIO(file_content))
-        parsed_data = []
+        all_sheets_data = []
+        all_definitions = {}
         debug_info = []
 
         for sheet_name in workbook.sheetnames:
             sheet = workbook[sheet_name]
             
-            # 1. 获取基地址 (在第2行)
-            base_address_str = sheet.cell(row=2, column=2).value
+            # 1. 获取基地址
             try:
-                if isinstance(base_address_str, str):
-                    base_address_str = base_address_str.replace('_', '')
+                base_address_str = str(sheet.cell(row=2, column=2).value).replace('_', '')
                 base_address = int(base_address_str, 16)
             except (ValueError, TypeError, AttributeError) as e:
-                debug_info.append(f"Sheet '{sheet_name}': Skipped. Invalid base address ('{base_address_str}'). Error: {e}")
+                debug_info.append(f"Sheet '{sheet_name}': Skipped. Invalid base address. Error: {e}")
                 continue
 
-            # 2. 获取表头 (修正：在第4行)，并清理空格
+            # 2. 获取表头
             header = [str(cell.value).strip() if cell.value is not None else "" for cell in sheet[4]]
-            if "偏移地址" not in header or "初始值" not in header or "名称" not in header:
-                debug_info.append(f"Sheet '{sheet_name}': Skipped. Missing required columns ('偏移地址', '初始值', '名称') in header. Actual header found: {header}")
+            required_cols = ['名称', '偏移地址', '成员变量', '位域', '类型', '初始值', '成员描述']
+            if not all(col in header for col in required_cols):
+                debug_info.append(f"Sheet '{sheet_name}': Skipped. Missing required columns.")
                 continue
+            
+            col_map = {name: i for i, name in enumerate(header)}
             
             sheet_data = {"name": sheet_name, "rows": []}
+            sheet_registers_def = {}
+            current_reg_name = None
 
-            # 3. 从第五行开始遍历数据
+            # 3. 遍历数据行
             for row_idx, row in enumerate(sheet.iter_rows(min_row=5, values_only=True), start=5):
-                row_dict = dict(zip(header, row))
-                
-                offset_val = row_dict.get("偏移地址")
-                
-                # 跳过没有偏移地址的行 (这些是位域描述行或空行)
-                if offset_val is None:
-                    continue
+                reg_name_val = row[col_map['名称']]
+                offset_val = row[col_map['偏移地址']]
 
-                # 4. 计算最终地址
-                try:
-                    offset_str = str(offset_val)
-                    offset = int(offset_str, 16)
-                    final_address = base_address + offset
-                    address_hex = f"0x{final_address:08X}"
-                except (ValueError, TypeError) as e:
-                    debug_info.append(f"Sheet '{sheet_name}', Row {row_idx}: Skipped. Invalid offset address '{offset_val}'. Error: {e}")
-                    continue
-
-                # 5. 提取数据
-                description = str(row_dict.get("名称", ""))
-                default_data = str(row_dict.get("初始值", "0x00000000"))
+                # 新的寄存器定义行
+                if pd.notna(reg_name_val) and pd.notna(offset_val) and str(offset_val).strip().lower().startswith('0x'):
+                    current_reg_name = str(reg_name_val)
+                    try:
+                        offset = int(str(offset_val), 16)
+                        absolute_address = base_address + offset
+                        address_hex = f"0x{absolute_address:08X}"
+                        
+                        # 添加到表格数据
+                        sheet_data["rows"].append({
+                            "address": address_hex,
+                            "data": str(row[col_map['初始值']]),
+                            "description": current_reg_name
+                        })
+                        
+                        # 添加到位域定义
+                        sheet_registers_def[current_reg_name] = {
+                            "address": address_hex,
+                            "init_value": str(row[col_map['初始值']]),
+                            "bit_fields": []
+                        }
+                    except (ValueError, TypeError):
+                        current_reg_name = None
+                        continue
                 
-                # 如果名称为空或为'None'，也跳过，这通常是无效的子行
-                if not description or description.lower() == 'nan' or description.lower() == 'none':
-                    continue
+                # 位域信息行
+                member_val = row[col_map['成员变量']]
+                bitfield_val = row[col_map['位域']]
+                if current_reg_name and pd.notna(member_val) and pd.notna(bitfield_val):
+                    try:
+                        bit_range = str(bitfield_val)
+                        start_bit, end_bit = (int(p) for p in bit_range.split(':')) if ':' in bit_range else (int(bit_range), int(bit_range))
+                        
+                        sheet_registers_def[current_reg_name]["bit_fields"].append({
+                            "name": str(member_val),
+                            "start_bit": start_bit,
+                            "end_bit": end_bit,
+                            "type": str(row[col_map['类型']]).strip(),
+                            "description": str(row[col_map['成员描述']])
+                        })
+                    except (ValueError, TypeError):
+                        continue
 
-                sheet_data["rows"].append({
-                    "address": address_hex,
-                    "data": default_data,
-                    "description": description
-                })
-            
             if sheet_data["rows"]:
-                parsed_data.append(sheet_data)
-            else:
-                debug_info.append(f"Sheet '{sheet_name}': No valid register rows found.")
-            
-        return parsed_data, debug_info
+                all_sheets_data.append(sheet_data)
+            if sheet_registers_def:
+                all_definitions[sheet_name] = sheet_registers_def
+        
+        return all_sheets_data, all_definitions, debug_info
 
     except Exception as e:
-        return [], [f"Critical Excel parsing error: {e}"]
+        return [], {}, [f"Critical Excel parsing error: {e}"]
 
 
 class ExcelUploadRequest(BaseModel):
     file_content: str  # Base64 encoded string
-
-@router.get("/definitions")
-def get_definitions():
-    """获取寄存器定义"""
-    try:
-        definitions = register_controller.get_register_definitions()
-        return {
-            "success": True,
-            "data": definitions
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取寄存器定义失败: {str(e)}")
-
 
 @router.post("/upload-excel")
 async def upload_excel(request: ExcelUploadRequest):
@@ -240,18 +246,21 @@ async def upload_excel(request: ExcelUploadRequest):
         # 解码Base64字符串
         contents = base64.b64decode(request.file_content)
         
-        parsed_data, debug_info = parse_register_excel(contents)
+        table_data, definitions, debug_info = parse_register_excel(contents)
         
         message = "Excel file parsing complete."
-        if not parsed_data and not debug_info:
+        if not table_data and not debug_info:
             message = "Excel file is empty or has an unsupported format."
-        elif not parsed_data and debug_info:
+        elif not table_data and debug_info:
             message = "Parsing finished with issues. See debug info for details."
 
         return {
             "success": True,
             "message": message,
-            "data": parsed_data,
+            "data": {
+                "tables": table_data,
+                "definitions": definitions
+            },
             "debug": debug_info
         }
     except (base64.binascii.Error, ValueError):

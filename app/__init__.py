@@ -6,8 +6,9 @@ LastEditTime: 2025-10-09 15:48:15
 Description: 
 '''
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
 
@@ -65,6 +66,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 静态文件服务
+if getattr(sys, 'frozen', False):
+    # Running in a bundle
+    base_path = sys._MEIPASS
+else:
+    # Running in a normal Python environment
+    base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+static_files_path = os.path.join(base_path, "serial_vue", "dist")
+
+app.mount("/assets", StaticFiles(directory=os.path.join(static_files_path, "assets")), name="assets")
+
+app.include_router(v1_router)
+
+@app.get("/", include_in_schema=False)
+async def read_index():
+    return FileResponse(os.path.join(static_files_path, 'index.html'))
+
+@app.get("/{catchall:path}", include_in_schema=False)
+async def read_spa(catchall: str):
+    return FileResponse(os.path.join(static_files_path, 'index.html'))
+
 
 @app.on_event("startup")
 async def on_startup() -> None:
@@ -77,9 +100,6 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     # 停止串口监听
     port_monitor.stop_monitoring()
-
-
-app.include_router(v1_router)
 
 
 @app.get("/api/ping")
