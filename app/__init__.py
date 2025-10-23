@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
-
-import os
+import argparse
 import sys
+import os
+
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.settings.database import engine, Base
@@ -34,6 +35,13 @@ serial_helper = SerialHelper()
 ws_manager = WebSocketManager()
 port_monitor = PortMonitor(ws_manager)
 from fastapi.responses import HTMLResponse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--serve-static", action="store_true", help="启用静态文件服务")
+args = parser.parse_args()
+
+# 配置标志 - 通过环境变量控制
+SERVE_STATIC = args.serve_static or os.getenv("SERVE_STATIC", "false").lower() == "true"
 
 
 tags_metadata = [
@@ -66,28 +74,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 静态文件服务
-if getattr(sys, 'frozen', False):
-    # Running in a bundle
-    base_path = sys._MEIPASS
+# 条件式静态文件服务
+if SERVE_STATIC:
+    if getattr(sys, 'frozen', False):
+        # Running in a bundle
+        base_path = sys._MEIPASS
+    else:
+        # Running in a normal Python environment
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+    static_files_path = os.path.join(base_path, "serial_vue", "dist")
+    
+    if os.path.exists(static_files_path):
+        app.mount("/assets", StaticFiles(directory=os.path.join(static_files_path, "assets")), name="assets")
+        
+        @app.get("/", include_in_schema=False)
+        async def read_index():
+            return FileResponse(os.path.join(static_files_path, 'index.html'))
+
+        @app.get("/{catchall:path}", include_in_schema=False)
+        async def read_spa(catchall: str):
+            return FileResponse(os.path.join(static_files_path, 'index.html'))
+        
+        print("静态文件服务已启用")
+    else:
+        print(f"警告: 静态文件路径不存在: {static_files_path}")
 else:
-    # Running in a normal Python environment
-    base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-
-static_files_path = os.path.join(base_path, "serial_vue", "dist")
-
-app.mount("/assets", StaticFiles(directory=os.path.join(static_files_path, "assets")), name="assets")
+    print("静态文件服务已禁用")
 
 app.include_router(v1_router)
-
-@app.get("/", include_in_schema=False)
-async def read_index():
-    return FileResponse(os.path.join(static_files_path, 'index.html'))
-
-@app.get("/{catchall:path}", include_in_schema=False)
-async def read_spa(catchall: str):
-    return FileResponse(os.path.join(static_files_path, 'index.html'))
-
 
 @app.on_event("startup")
 async def on_startup() -> None:

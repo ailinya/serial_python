@@ -1,17 +1,17 @@
 # Web 框架
-fastapi==0.119.0
-uvicorn==0.37.0
+fastapi
+uvicorn[standard]
 
 # 数据库相关
-sqlalchemy==2.0.44
+sqlalchemy
 
 # 数据验证
-pydantic==2.12.0
+pydantic
 
 # 串口通信
-pyserial==3.5
+pyserial
 
 # 其他依赖
-python-multipart==0.0.6
-openpyxl==3.1.2
-pandas==2.2.2
+python-multipart
+openpyxl
+pandas
