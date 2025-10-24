@@ -65,8 +65,5 @@ if __name__ == "__main__":
     # Give the server a moment to start up
     time.sleep(5) 
 
-    # Open the browser
-    webbrowser.open("http://localhost:9993")
-
     # Wait for the server process to finish (e.g., by closing the console window)
     server_process.join()

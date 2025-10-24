@@ -13,6 +13,7 @@ import time
 import pandas as pd
 import os
 import asyncio
+import io
 
 from app.models.register_log import RegisterLog
 from app.models.serial_config import SerialConfig
@@ -69,6 +70,125 @@ class RegisterController:
     
     def __init__(self, serial_helper: SerialHelper):
         self.serial_helper = serial_helper
+        self.register_definitions = {}  # In-memory storage for register definitions
+
+    def get_register_definitions(self):
+        """获取当前加载的寄存器定义"""
+        # Simply return the definitions from memory.
+        # The frontend can handle an empty object if nothing is loaded.
+        return self.register_definitions
+
+    def upload_and_parse_excel(self, file_content: bytes):
+        """解析上传的Excel文件并将其存储在内存中"""
+        try:
+            xls = pd.ExcelFile(io.BytesIO(file_content))
+            all_definitions = {}
+
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                
+                # 1. 获取基地址
+                try:
+                    base_address_str = df.iloc[1, 1] # B2
+                    if isinstance(base_address_str, str):
+                        base_address_str = base_address_str.replace('_', '')
+                    base_address = int(str(base_address_str), 16)
+                except (ValueError, TypeError, IndexError):
+                    continue # 基地址无效或不存在，跳过此sheet
+
+                # 2. 动态查找列索引
+                header_row_index = 3
+                if len(df) <= header_row_index:
+                    continue # sheet太短，没有表头
+                
+                header_row = df.iloc[header_row_index]
+                col_map = {str(col_name).strip(): i for i, col_name in enumerate(header_row) if pd.notna(col_name)}
+
+                # 检查必需的列是否存在
+                required_cols = ['名称', '偏移地址', '成员变量', '位域', '类型', '初始值', '成员描述']
+                if not all(col in col_map for col in required_cols):
+                    continue # 缺少关键列，跳过此sheet
+
+                name_idx = col_map['名称']
+                offset_idx = col_map['偏移地址']
+                init_val_idx = col_map['初始值']
+                member_idx = col_map['成员变量']
+                bitfield_idx = col_map['位域']
+                type_idx = col_map['类型']
+                desc_idx = col_map['成员描述']
+
+                # 3. 遍历数据行进行解析
+                sheet_registers = {}
+                current_reg_name = None
+                
+                for index, row in df.iterrows():
+                    if index <= header_row_index: # 跳过表头及之前的行
+                        continue
+
+                    reg_name_val = row[name_idx]
+                    offset_val = row[offset_idx]
+
+                    # 步骤1: 检查是否为新的寄存器定义行
+                    if pd.notna(reg_name_val) and pd.notna(offset_val) and str(offset_val).strip().lower().startswith('0x'):
+                        current_reg_name = str(reg_name_val)
+                        
+                        try:
+                            offset = int(str(offset_val), 16)
+                            absolute_address = base_address + offset
+                            address_hex = f"0x{absolute_address:08X}"
+
+                            sheet_registers[current_reg_name] = {
+                                "address": address_hex,
+                                "init_value": row[init_val_idx],
+                                "bit_fields": []
+                            }
+                        except (ValueError, TypeError):
+                            current_reg_name = None
+                            continue
+                    
+                    # 步骤2: 检查当前行是否有位域信息
+                    member_val = row[member_idx]
+                    bitfield_val = row[bitfield_idx]
+                    if current_reg_name and pd.notna(member_val) and pd.notna(bitfield_val):
+                        bit_field_name = str(member_val)
+                        bit_range = str(bitfield_val)
+                        field_type = str(row[type_idx]).strip()
+
+                        if field_type.upper() == 'RO' or 'RESERVED' in bit_field_name.upper():
+                            final_type = 'RO'
+                        else:
+                            final_type = field_type
+
+                        try:
+                            if ':' in bit_range:
+                                parts = bit_range.split(':')
+                                start_bit = int(parts[0])
+                                end_bit = int(parts[1])
+                            else:
+                                start_bit = int(bit_range)
+                                end_bit = int(bit_range)
+                            
+                            if current_reg_name in sheet_registers:
+                                description = str(row[desc_idx]) if pd.notna(row[desc_idx]) else ''
+                                sheet_registers[current_reg_name]["bit_fields"].append({
+                                    "name": bit_field_name,
+                                    "start_bit": start_bit,
+                                    "end_bit": end_bit,
+                                    "type": final_type,
+                                    "description": description
+                                })
+                        except (ValueError, TypeError):
+                            continue
+
+                if sheet_registers:
+                    all_definitions[sheet_name] = sheet_registers
+            
+            self.register_definitions = all_definitions  # Store parsed data in memory
+            return all_definitions
+        except Exception as e:
+            # Clear definitions on failure to avoid serving stale/bad data
+            self.register_definitions = {}
+            raise HTTPException(status_code=500, detail=f"Failed to parse register file: {str(e)}")
 
     def get_register_logs(self, db: Session, skip: int = 0, limit: int = 100, 
                          config_id: Optional[int] = None) -> RegisterLogList:
