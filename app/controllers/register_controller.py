@@ -13,6 +13,7 @@ import time
 import pandas as pd
 import os
 import asyncio
+import io
 
 from app.models.register_log import RegisterLog
 from app.models.serial_config import SerialConfig
@@ -69,16 +70,18 @@ class RegisterController:
     
     def __init__(self, serial_helper: SerialHelper):
         self.serial_helper = serial_helper
+        self.register_definitions = {}  # In-memory storage for register definitions
 
     def get_register_definitions(self):
-        """从Excel文件读取寄存器定义"""
-        excel_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'serial_vue', 'system_register copy.xlsx')
-        
-        if not os.path.exists(excel_path):
-            raise HTTPException(status_code=404, detail="Register definition file not found.")
+        """获取当前加载的寄存器定义"""
+        # Simply return the definitions from memory.
+        # The frontend can handle an empty object if nothing is loaded.
+        return self.register_definitions
 
+    def upload_and_parse_excel(self, file_content: bytes):
+        """解析上传的Excel文件并将其存储在内存中"""
         try:
-            xls = pd.ExcelFile(excel_path)
+            xls = pd.ExcelFile(io.BytesIO(file_content))
             all_definitions = {}
 
             for sheet_name in xls.sheet_names:
@@ -180,8 +183,11 @@ class RegisterController:
                 if sheet_registers:
                     all_definitions[sheet_name] = sheet_registers
             
+            self.register_definitions = all_definitions  # Store parsed data in memory
             return all_definitions
         except Exception as e:
+            # Clear definitions on failure to avoid serving stale/bad data
+            self.register_definitions = {}
             raise HTTPException(status_code=500, detail=f"Failed to parse register file: {str(e)}")
 
 
