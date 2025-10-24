@@ -36,12 +36,53 @@ ws_manager = WebSocketManager()
 port_monitor = PortMonitor(ws_manager)
 from fastapi.responses import HTMLResponse
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--serve-static", action="store_true", help="启用静态文件服务")
-args = parser.parse_args()
+# --- 配置静态文件服务 ---
 
-# 配置标志 - 通过环境变量控制
-SERVE_STATIC = args.serve_static or os.getenv("SERVE_STATIC", "false").lower() == "true"
+def should_serve_static_files():
+    """
+    决定是否应提供静态文件，并在需要时自动创建配置文件。
+    优先级: config.json > 环境变量 > 默认禁用
+    """
+    try:
+        is_frozen = getattr(sys, 'frozen', False)
+        
+        # 确定基础路径
+        if is_frozen:
+            # 打包后的应用，config.json 与 exe 同级
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            # 开发环境，config.json 在项目根目录
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            
+        config_path = os.path.join(base_dir, 'config.json')
+
+        # 如果配置文件存在，则读取它
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            return config.get('serve_static', False)
+
+        # --- 自动生成 config.json 的逻辑 ---
+        # 仅在打包后的应用首次运行时，且环境变量未设置时，自动创建
+        if is_frozen and "SERVE_STATIC" not in os.environ:
+            try:
+                default_config = {"serve_static": True}
+                with open(config_path, 'w') as f:
+                    json.dump(default_config, f, indent=2)
+                # 既然我们创建了它，就直接返回 True
+                return True
+            except Exception:
+                # 如果创建失败，则继续执行后续逻辑
+                pass
+
+    except Exception:
+        # 忽略任何文件处理或 JSON 解析错误
+        pass
+
+    # 如果以上逻辑都未返回，则回退到环境变量
+    return os.getenv("SERVE_STATIC", "false").lower() == "true"
+
+SERVE_STATIC = should_serve_static_files()
 
 
 tags_metadata = [

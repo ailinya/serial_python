@@ -9,7 +9,7 @@ import os
 import sys
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app
+from app import app, SERVE_STATIC
 
 
 import uvicorn
@@ -63,7 +63,13 @@ if __name__ == "__main__":
     server_process.start()
 
     # Give the server a moment to start up
-    time.sleep(5) 
+    time.sleep(5)
+
+    # --- 智能自动打开浏览器 ---
+    # 仅在打包后的应用中，并且前端服务已启用时，才自动打开浏览器
+    is_frozen = getattr(sys, 'frozen', False)
+    if is_frozen and SERVE_STATIC:
+        webbrowser.open("http://localhost:9993")
 
     # Wait for the server process to finish (e.g., by closing the console window)
     server_process.join()

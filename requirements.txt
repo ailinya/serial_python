@@ -15,3 +15,6 @@ pyserial
 python-multipart
 openpyxl
 pandas
+
+# 打包工具
+pyinstaller
