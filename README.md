@@ -83,6 +83,14 @@ cd ../../serial_python
 
 ### 步骤 2: 生成 .spec 配置文件 (仅需一次)
 
+#### 方法一：直接打包
+```bash
+# 使用绝对路径来指定 --add-data 的源目录
+# --windowed 打包应用不显示终端
+venv\Scripts\pyinstaller.exe --noconfirm --onefile --windowed --add-data "c:\workspace\test_stuio_new\serial_vue\dist serial_vue/dist" app/main.py
+```
+#### 方法二：使用SPEC打包
+
 PyInstaller 使用一个 `.spec` 文件来管理复杂的打包配置。这个文件只需要生成一次。
 
 ```bash

@@ -14,6 +14,7 @@ import json
 import argparse
 import sys
 import os
+import logging
 
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -26,9 +27,6 @@ from app.api import v1_router
 from app.utils.serial_helper import SerialHelper
 from app.utils.port_monitor import PortMonitor
 from app.ws_manager import WebSocketManager
-
-# 创建数据库表
-Base.metadata.create_all(bind=engine)
 
 # 全局实例
 serial_helper = SerialHelper()
@@ -82,8 +80,8 @@ def should_serve_static_files():
     # 如果以上逻辑都未返回，则回退到环境变量
     return os.getenv("SERVE_STATIC", "false").lower() == "true"
 
-SERVE_STATIC = should_serve_static_files()
-
+# SERVE_STATIC 的值将在 on_startup 事件中确定
+SERVE_STATIC = False
 
 tags_metadata = [
     {
@@ -115,38 +113,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 条件式静态文件服务
-if SERVE_STATIC:
-    if getattr(sys, 'frozen', False):
-        # Running in a bundle
-        base_path = sys._MEIPASS
-    else:
-        # Running in a normal Python environment
-        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-
-    static_files_path = os.path.join(base_path, "serial_vue", "dist")
-    
-    if os.path.exists(static_files_path):
-        app.mount("/assets", StaticFiles(directory=os.path.join(static_files_path, "assets")), name="assets")
-        
-        @app.get("/", include_in_schema=False)
-        async def read_index():
-            return FileResponse(os.path.join(static_files_path, 'index.html'))
-
-        @app.get("/{catchall:path}", include_in_schema=False)
-        async def read_spa(catchall: str):
-            return FileResponse(os.path.join(static_files_path, 'index.html'))
-        
-        print("静态文件服务已启用")
-    else:
-        print(f"警告: 静态文件路径不存在: {static_files_path}")
-else:
-    print("静态文件服务已禁用")
-
 app.include_router(v1_router)
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    global SERVE_STATIC
+    SERVE_STATIC = should_serve_static_files()
+
+    # --- 动态挂载静态文件 ---
+    if SERVE_STATIC:
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        
+        static_files_path = os.path.join(base_path, "serial_vue", "dist")
+
+        if os.path.exists(static_files_path):
+            app.mount("/assets", StaticFiles(directory=os.path.join(static_files_path, "assets")), name="assets")
+            
+            @app.get("/", include_in_schema=False)
+            async def read_index():
+                return FileResponse(os.path.join(static_files_path, 'index.html'))
+
+            @app.get("/{catchall:path}", include_in_schema=False)
+            async def read_spa(catchall: str):
+                return FileResponse(os.path.join(static_files_path, 'index.html'))
+            
+            # 日志已在主进程中打印，此处不再重复
+            # logging.info("静态文件服务已启用")
+        else:
+            logging.warning(f"静态文件路径不存在: {static_files_path}")
+    # else:
+        # 日志已在主进程中打印，此处不再重复
+        # logging.info("静态文件服务已禁用")
+
+    # 在应用启动时创建数据库表
+    Base.metadata.create_all(bind=engine)
+    
     # 初始化时无需打开串口，按需通过 API 打开
     # 启动串口监听
     port_monitor.start_monitoring()
